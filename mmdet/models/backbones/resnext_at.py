@@ -6,9 +6,102 @@ from ..builder import BACKBONES
 from ..utils import ResLayer
 from .resnet import Bottleneck as _Bottleneck
 from .resnet import ResNet
+from torch.nn.modules.utils import _pair, _single
+from mmcv.ops.deform_conv import deform_conv2d
 
 import torch
 from torch import nn
+
+#############################################################################################
+class SKDConv(nn.Conv2d):
+    def __init__(self, channels, stride, M=2, reduction=16):
+        super(SKDConv, self).__init__(
+            channels,
+            channels,
+            kernel_size=3,
+            stride=stride,
+            padding=1,
+            dilation=1,
+            bias=False)
+
+        self.deform_groups = 1
+
+        self.conv_offset_3 = nn.Conv2d(
+            channels,
+            self.deform_groups * 2 * self.kernel_size[0] * self.kernel_size[1],
+            kernel_size=self.kernel_size,
+            stride=self.stride,
+            padding=self.padding,
+            dilation=self.dilation,
+            bias=True)
+
+        self.conv_offset_5 = nn.Conv2d(
+            channels,
+            self.deform_groups * 2 * self.kernel_size[0] * self.kernel_size[1],
+            kernel_size=self.kernel_size,
+            stride=self.stride,
+            padding=2,
+            dilation=2,
+            bias=True)
+
+        self.init_offset()
+
+        self.weight_diff = nn.Parameter(torch.Tensor(self.weight.size()))
+        self.weight_diff.data.zero_()
+        self.M = M
+
+        self.att_c = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(channels, channels // reduction, 1, bias=False),
+            nn.ReLU(),
+            nn.Conv2d(channels // reduction, channels * M, 1, bias=False)
+        )
+        self.att_s = nn.Conv2d(1, 2, 3, 1, 1, bias=False)
+
+    def init_offset(self):
+        self.conv_offset_3.weight.data.zero_()
+        self.conv_offset_3.bias.data.zero_()
+        self.conv_offset_5.weight.data.zero_()
+        self.conv_offset_5.bias.data.zero_()
+
+    def forward(self, x):
+        offset_3 = self.conv_offset_3(x)
+        offset_5 = self.conv_offset_5(x)
+
+        splited = list()
+        splited.append(deform_conv2d(x, offset_3, self.weight, self.stride, self.padding,
+                       self.dilation, self.groups, self.deform_groups))
+        for i in range(1, self.M):
+            self.padding = 1 + i
+            self.dilation = 1 + i
+            weight = self.weight + self.weight_diff
+            splited.append(deform_conv2d(x, offset_5, weight, self.stride, self.padding,
+                           self.dilation, self.groups, self.deform_groups))
+
+        self.padding = 1
+        self.dilation = 1
+
+        feats = sum(splited)
+        att_c = self.att_c(feats.contiguous())
+        att_c = att_c.reshape(x.size(0), self.M, x.size(1))
+        att_c = att_c.softmax(dim=1)
+        att_c = att_c.reshape(x.size(0), -1, 1, 1)
+        att_c = torch.split(att_c, x.size(1), dim=1)
+
+        att_c = sum([w * s for w, s in zip(att_c, splited)])
+
+        att_s = self.att_s(torch.max(feats, dim=1, keepdim=True)[0])
+        att_s = att_s.softmax(dim=1)
+        att_s = torch.split(att_s, 1, dim=1)
+
+        att_s = sum([w * s for w, s in zip(att_s, splited)])
+
+        #return (att_c + att_s) / 2
+        #return torch.where(att_c > att_s, att_c, att_s)
+        return att_c
+
+
+#############################################################################################
 
 
 class SKConv(nn.Conv2d):
@@ -71,8 +164,10 @@ class SKConv(nn.Conv2d):
 
         att_s = sum([w * s for w, s in zip(att_s, splited)])
 
-        return (att_c + att_s) / 2
+        #return (att_c + att_s) / 2
         #return torch.where(att_c > att_s, att_c, att_s)
+        return att_s
+
         #
         # att_3d = self.att_3d(feats_c+feats_s)
         #
@@ -132,7 +227,7 @@ class Bottleneck(_Bottleneck):
             #     dilation=self.dilation,
             #     groups=groups,
             #     bias=False)
-            self.conv2 = SKConv(width, self.conv2_stride)
+            self.conv2 = SKDConv(width, self.conv2_stride)
         else:
             assert self.conv_cfg is None, 'conv_cfg must be None for DCN'
             self.conv2 = build_conv_layer(
