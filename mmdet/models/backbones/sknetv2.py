@@ -262,7 +262,7 @@ class Bottleneck(_Bottleneck):
 
 
 @BACKBONES.register_module()
-class ResNeXtAT(ResNet):
+class SKNetV2(ResNet):
     """ResNeXt backbone.
 
     Args:
@@ -298,7 +298,7 @@ class ResNeXtAT(ResNet):
     def __init__(self, groups=1, base_width=4, **kwargs):
         self.groups = groups
         self.base_width = base_width
-        super(ResNeXtAT, self).__init__(**kwargs)
+        super(SKNetV2, self).__init__(**kwargs)
 
     def make_res_layer(self, **kwargs):
         """Pack all blocks in a stage into a ``ResLayer``"""

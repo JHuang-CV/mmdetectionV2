@@ -9,8 +9,9 @@ from .resnext import ResNeXt
 from .ssd_vgg import SSDVGG
 from .resnet_at import ResNetAT
 from .resnext_at import ResNeXtAT
+from .sknetv2 import SKNetV2
 
 __all__ = [
     'RegNet', 'ResNet', 'ResNetV1d', 'ResNeXt', 'SSDVGG', 'HRNet', 'Res2Net',
-    'HourglassNet', 'DetectoRS_ResNet', 'DetectoRS_ResNeXt', 'ResNetAT', 'ResNeXtAT'
+    'HourglassNet', 'DetectoRS_ResNet', 'DetectoRS_ResNeXt', 'ResNetAT', 'ResNeXtAT', 'SKNetV2'
 ]
