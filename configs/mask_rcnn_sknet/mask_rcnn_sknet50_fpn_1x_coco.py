@@ -1,4 +1,4 @@
-_base_ = '../retinanet/retinanet_r50_fpn_1x_coco.py'
+_base_ = '../mask_rcnn/mask_rcnn_r50_fpn_1x_coco.py'
 model = dict(
     pretrained='torchvision://resnet50',
     backbone=dict(
@@ -10,6 +10,7 @@ model = dict(
         out_indices=(0, 1, 2, 3),
         frozen_stages=1,
         norm_cfg=dict(type='BN', requires_grad=True),
+        norm_eval=True,
         style='pytorch'))
 
 optimizer = dict(type='SGD', lr=0.00125, momentum=0.9, weight_decay=0.0001)

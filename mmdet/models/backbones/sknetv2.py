@@ -14,7 +14,7 @@ from torch import nn
 
 #############################################################################################
 class SKDConv(nn.Conv2d):
-    def __init__(self, channels, stride, M=2, reduction=16):
+    def __init__(self, channels, stride, groups, M=2, reduction=16):
         super(SKDConv, self).__init__(
             channels,
             channels,
@@ -22,7 +22,9 @@ class SKDConv(nn.Conv2d):
             stride=stride,
             padding=1,
             dilation=1,
-            bias=False)
+            bias=False,
+            groups=groups
+        )
 
         self.deform_groups = 1
 
@@ -72,8 +74,8 @@ class SKDConv(nn.Conv2d):
         splited.append(deform_conv2d(x, offset_3, self.weight, self.stride, self.padding,
                        self.dilation, self.groups, self.deform_groups))
         for i in range(1, self.M):
-            self.padding = 1 + i
-            self.dilation = 1 + i
+            self.padding = 2 + i
+            self.dilation = 2 + i
             weight = self.weight + self.weight_diff
             splited.append(deform_conv2d(x, offset_5, weight, self.stride, self.padding,
                            self.dilation, self.groups, self.deform_groups))
@@ -105,7 +107,7 @@ class SKDConv(nn.Conv2d):
 
 
 class SKConv(nn.Conv2d):
-    def __init__(self, channels, stride, M=2, reduction=16):
+    def __init__(self, channels, stride, groups, M=3, reduction=16):
         super(SKConv, self).__init__(
             channels,
             channels,
@@ -113,7 +115,8 @@ class SKConv(nn.Conv2d):
             stride=stride,
             padding=1,
             dilation=1,
-            bias=False
+            bias=False,
+            groups=groups
         )
         # self.conv1 = nn.ModuleList([])
         # for i in range(M):
@@ -122,8 +125,11 @@ class SKConv(nn.Conv2d):
         #         nn.BatchNorm2d(channels),
         #         nn.ReLU()
         #     ))
-        self.weight_diff = nn.Parameter(torch.Tensor(self.weight.size()))
-        self.weight_diff.data.zero_()
+
+        self.weight_diff_5 = nn.Parameter(torch.Tensor(self.weight.size()))
+        self.weight_diff_5.data.zero_()
+        self.weight_diff_7 = nn.Parameter(torch.Tensor(self.weight.size()))
+        self.weight_diff_7.data.zero_()
         self.M = M
 
         #nn.init.kaiming_normal_(self.weight, a=0, mode='fan_out', nonlinearity='relu')
@@ -132,15 +138,15 @@ class SKConv(nn.Conv2d):
             nn.AdaptiveAvgPool2d(1),
             nn.Conv2d(channels, channels // reduction, 1, bias=False),
             nn.ReLU(),
-            nn.Conv2d(channels // reduction, channels * M, 1, bias=False)
+            nn.Conv2d(channels // reduction, channels * self.M, 1, bias=False)
         )
-        self.att_s = nn.Conv2d(1, 2, 3, 1, 1, bias=False)
+        self.att_s = nn.Conv2d(1, self.M, 3, 1, 1, bias=False)
         # self.att_3d = nn.Sequential(
         #     nn.Conv2d(channels, channels, 3, 1, 1, bias=False),
         #     nn.Sigmoid()
         # )
 
-        self.init_weights()
+        #self.init_weights()
 
     def init_weights(self):
         for m in self.modules():
@@ -151,14 +157,13 @@ class SKConv(nn.Conv2d):
         splited = list()
         splited.append(super(SKConv, self).conv2d_forward(x, self.weight))
         for i in range(1, self.M):
-            self.padding = 2 + i
-            self.dilation = 2 + i
-            weight = self.weight + self.weight_diff
+            self.padding = tuple(i + p for p in self.padding)
+            self.dilation = tuple(i + p for p in self.dilation)
+            weight = self.weight + self.weight_diff_5 if (i+self.dilation[0]) == 2 else self.weight_diff_7
             splited.append(super(SKConv, self).conv2d_forward(x, weight))
-
-        self.padding = 1
-        self.dilation = 1
-
+            self.padding = (1, 1)
+            self.dilation = (1, 1)
+        
         feats = sum(splited)
         att_c = self.att_c(feats.contiguous())
         att_c = att_c.reshape(x.size(0), self.M, x.size(1))
@@ -177,6 +182,7 @@ class SKConv(nn.Conv2d):
         #return (att_c + att_s) / 2
         return torch.where(att_c > att_s, att_c, att_s)
         #return att_s
+        #return att_c
 
         #
         # att_3d = self.att_3d(feats_c+feats_s)
@@ -237,7 +243,7 @@ class Bottleneck(_Bottleneck):
             #     dilation=self.dilation,
             #     groups=groups,
             #     bias=False)
-            self.conv2 = SKConv(width, self.conv2_stride)
+            self.conv2 = SKConv(width, self.conv2_stride, groups)
         else:
             assert self.conv_cfg is None, 'conv_cfg must be None for DCN'
             self.conv2 = build_conv_layer(
