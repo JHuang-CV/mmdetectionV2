@@ -85,7 +85,8 @@ def test_rpn_forward():
         'foveabox/fovea_align_r50_fpn_gn-head_4x4_2x_coco.py',
         # 'free_anchor/retinanet_free_anchor_r50_fpn_1x_coco.py',
         # 'atss/atss_r50_fpn_1x_coco.py',  # not ready for topk
-        'reppoints/reppoints_moment_r50_fpn_1x_coco.py'
+        'reppoints/reppoints_moment_r50_fpn_1x_coco.py',
+        'yolo/yolov3_d53_mstrain-608_273e_coco.py'
     ])
 def test_single_stage_forward_gpu(cfg_file):
     if not torch.cuda.is_available():
@@ -338,3 +339,99 @@ def _demo_mm_inputs(input_shape=(1, 3, 300, 300),
         'gt_masks': gt_masks,
     }
     return mm_inputs
+
+
+def test_yolact_forward():
+    model, train_cfg, test_cfg = _get_detector_cfg(
+        'yolact/yolact_r50_1x8_coco.py')
+    model['pretrained'] = None
+
+    from mmdet.models import build_detector
+    detector = build_detector(model, train_cfg=train_cfg, test_cfg=test_cfg)
+
+    input_shape = (1, 3, 550, 550)
+    mm_inputs = _demo_mm_inputs(input_shape)
+
+    imgs = mm_inputs.pop('imgs')
+    img_metas = mm_inputs.pop('img_metas')
+
+    # Test forward train
+    detector.train()
+    gt_bboxes = mm_inputs['gt_bboxes']
+    gt_labels = mm_inputs['gt_labels']
+    gt_masks = mm_inputs['gt_masks']
+    losses = detector.forward(
+        imgs,
+        img_metas,
+        gt_bboxes=gt_bboxes,
+        gt_labels=gt_labels,
+        gt_masks=gt_masks,
+        return_loss=True)
+    assert isinstance(losses, dict)
+
+    # Test forward test
+    detector.eval()
+    with torch.no_grad():
+        img_list = [g[None, :] for g in imgs]
+        batch_results = []
+        for one_img, one_meta in zip(img_list, img_metas):
+            result = detector.forward([one_img], [[one_meta]],
+                                      rescale=True,
+                                      return_loss=False)
+            batch_results.append(result)
+
+
+def test_detr_forward():
+    model, train_cfg, test_cfg = _get_detector_cfg(
+        'detr/detr_r50_8x2_150e_coco.py')
+    model['pretrained'] = None
+
+    from mmdet.models import build_detector
+    detector = build_detector(model, train_cfg=train_cfg, test_cfg=test_cfg)
+
+    input_shape = (1, 3, 550, 550)
+    mm_inputs = _demo_mm_inputs(input_shape)
+
+    imgs = mm_inputs.pop('imgs')
+    img_metas = mm_inputs.pop('img_metas')
+
+    # Test forward train with non-empty truth batch
+    detector.train()
+    gt_bboxes = mm_inputs['gt_bboxes']
+    gt_labels = mm_inputs['gt_labels']
+    losses = detector.forward(
+        imgs,
+        img_metas,
+        gt_bboxes=gt_bboxes,
+        gt_labels=gt_labels,
+        return_loss=True)
+    assert isinstance(losses, dict)
+    loss, _ = detector._parse_losses(losses)
+    assert float(loss.item()) > 0
+
+    # Test forward train with an empty truth batch
+    mm_inputs = _demo_mm_inputs(input_shape, num_items=[0])
+    imgs = mm_inputs.pop('imgs')
+    img_metas = mm_inputs.pop('img_metas')
+    gt_bboxes = mm_inputs['gt_bboxes']
+    gt_labels = mm_inputs['gt_labels']
+    losses = detector.forward(
+        imgs,
+        img_metas,
+        gt_bboxes=gt_bboxes,
+        gt_labels=gt_labels,
+        return_loss=True)
+    assert isinstance(losses, dict)
+    loss, _ = detector._parse_losses(losses)
+    assert float(loss.item()) > 0
+
+    # Test forward test
+    detector.eval()
+    with torch.no_grad():
+        img_list = [g[None, :] for g in imgs]
+        batch_results = []
+        for one_img, one_meta in zip(img_list, img_metas):
+            result = detector.forward([one_img], [[one_meta]],
+                                      rescale=True,
+                                      return_loss=False)
+            batch_results.append(result)
