@@ -56,9 +56,9 @@ class SKDConv(nn.Conv2d):
             nn.AdaptiveAvgPool2d(1),
             nn.Conv2d(channels, channels // reduction, 1, bias=False),
             nn.ReLU(),
-            nn.Conv2d(channels // reduction, channels * M, 1, bias=False)
+            nn.Conv2d(channels // reduction, channels * self.M, 1, bias=False)
         )
-        self.att_s = nn.Conv2d(1, 2, 3, 1, 1, bias=False)
+        self.att_s = nn.Conv2d(1, self.M, 3, 1, 1, bias=False)
 
     def init_offset(self):
         self.conv_offset_3.weight.data.zero_()
@@ -74,14 +74,13 @@ class SKDConv(nn.Conv2d):
         splited.append(deform_conv2d(x, offset_3, self.weight, self.stride, self.padding,
                        self.dilation, self.groups, self.deform_groups))
         for i in range(1, self.M):
-            self.padding = 2 + i
-            self.dilation = 2 + i
+            self.padding = tuple(2 + p for p in self.padding)
+            self.dilation = tuple(2 + d for d in self.dilation)
             weight = self.weight + self.weight_diff
             splited.append(deform_conv2d(x, offset_5, weight, self.stride, self.padding,
                            self.dilation, self.groups, self.deform_groups))
-
-        self.padding = 1
-        self.dilation = 1
+            self.padding = (1, 1)
+            self.dilation = (1, 1)
 
         feats = sum(splited)
         att_c = self.att_c(feats.contiguous())
@@ -243,7 +242,7 @@ class Bottleneck(_Bottleneck):
             #     dilation=self.dilation,
             #     groups=groups,
             #     bias=False)
-            self.conv2 = SKConv(width, self.conv2_stride, groups)
+            self.conv2 = SKDConv(width, self.conv2_stride, groups)
         else:
             assert self.conv_cfg is None, 'conv_cfg must be None for DCN'
             self.conv2 = build_conv_layer(
